@@ -2,6 +2,8 @@
 
 Persistent memory for Claude Code — auto-loads memories on session start, auto-saves on stop, with on-demand store/recall skills.
 
+> **For AI agents**: If a user asks you to install this plugin, follow the steps in [Installation](#installation) below. You'll need their TiDB or mnemo-server credentials. After installing via marketplace, set environment variables in `~/.claude/settings.json`.
+
 ## How It Works
 
 ```
@@ -31,39 +33,31 @@ Three lifecycle hooks + two skills:
 
 ## Installation
 
-### 1. Clone this repo
+### Method A: Marketplace Install (Recommended)
 
-```bash
-git clone https://github.com/qiffang/mnemos.git
-cd mnemos
+The simplest way to install — Claude Code handles plugin caching, updates, and hook registration automatically.
+
+#### Step 1: Add the marketplace
+
+In Claude Code, run:
+
+```
+/plugin marketplace add qiffang/mnemos
 ```
 
-Note the absolute path to `claude-plugin/`:
-```bash
-PLUGIN_DIR="$(pwd)/claude-plugin"
+#### Step 2: Install the plugin
+
+```
+/plugin install mnemo-memory@mnemos
 ```
 
-### 2. Make hooks executable
+Claude Code will prompt you to approve the hooks. Accept to enable automatic memory capture.
 
-```bash
-chmod +x "$PLUGIN_DIR"/hooks/*.sh
-```
+#### Step 3: Configure credentials
 
-### 3. Copy skills to Claude
+Add your database credentials to `~/.claude/settings.json`:
 
-```bash
-mkdir -p ~/.claude/skills
-cp -r "$PLUGIN_DIR/skills/memory-recall" ~/.claude/skills/memory-recall
-cp -r "$PLUGIN_DIR/skills/memory-store" ~/.claude/skills/memory-store
-```
-
-### 4. Configure `~/.claude/settings.json`
-
-Add the `env` and `hooks` sections (merge with existing config if needed).
-
-#### Option A: Direct Mode (default — TiDB Serverless)
-
-Connect directly to TiDB Cloud. No server deployment needed.
+**Direct Mode (TiDB Serverless — default, recommended):**
 
 ```json
 {
@@ -71,8 +65,75 @@ Connect directly to TiDB Cloud. No server deployment needed.
     "MNEMO_DB_HOST": "<your-tidb-host>",
     "MNEMO_DB_USER": "<your-tidb-username>",
     "MNEMO_DB_PASS": "<your-tidb-password>",
-    "MNEMO_DB_NAME": "mnemos",
-    "MNEMO_DB_PORT": "4000"
+    "MNEMO_DB_NAME": "mnemos"
+  }
+}
+```
+
+**Server Mode (mnemo-server):**
+
+```json
+{
+  "env": {
+    "MNEMO_API_URL": "http://your-server:8080",
+    "MNEMO_API_TOKEN": "mnemo_your_token_here"
+  }
+}
+```
+
+The plugin auto-detects the mode:
+- `MNEMO_DB_HOST` set → **Direct mode**
+- `MNEMO_API_URL` set → **Server mode**
+
+#### Step 4: Restart Claude Code
+
+Restart to activate the plugin. On the first session, the hooks will auto-create the `mnemos.memories` table (Direct mode only).
+
+#### Updating
+
+```
+/plugin marketplace update
+```
+
+---
+
+### Method B: Manual Install (settings.json hooks)
+
+If you prefer not to use the marketplace, you can configure hooks directly in `settings.json`.
+
+#### 1. Clone this repo
+
+```bash
+git clone https://github.com/qiffang/mnemos.git
+cd mnemos
+PLUGIN_DIR="$(pwd)/claude-plugin"
+```
+
+#### 2. Make hooks executable
+
+```bash
+chmod +x "$PLUGIN_DIR"/hooks/*.sh
+```
+
+#### 3. Copy skills to Claude
+
+```bash
+mkdir -p ~/.claude/skills
+cp -r "$PLUGIN_DIR/skills/memory-recall" ~/.claude/skills/memory-recall
+cp -r "$PLUGIN_DIR/skills/memory-store" ~/.claude/skills/memory-store
+```
+
+#### 4. Configure `~/.claude/settings.json`
+
+Add the `env` and `hooks` sections (merge with existing config):
+
+```json
+{
+  "env": {
+    "MNEMO_DB_HOST": "<your-tidb-host>",
+    "MNEMO_DB_USER": "<your-tidb-username>",
+    "MNEMO_DB_PASS": "<your-tidb-password>",
+    "MNEMO_DB_NAME": "mnemos"
   },
   "hooks": {
     "SessionStart": [
@@ -110,31 +171,13 @@ Connect directly to TiDB Cloud. No server deployment needed.
 }
 ```
 
-#### Option B: Server Mode (mnemo-server)
-
-Connect to a self-hosted mnemo-server. Supports multi-agent collaboration with space isolation.
-
-```json
-{
-  "env": {
-    "MNEMO_API_URL": "http://your-server:8080",
-    "MNEMO_API_TOKEN": "mnemo_your_token_here"
-  },
-  "hooks": { ... }
-}
-```
-
-The `hooks` section is identical — only the `env` variables differ. The plugin auto-detects the mode:
-- `MNEMO_DB_HOST` set → **Direct mode**
-- `MNEMO_API_URL` set → **Server mode**
-
 Replace `<PLUGIN_DIR>` with the actual absolute path (e.g. `/home/you/mnemos/claude-plugin`).
 
-> **Important**: Do NOT use `enabledPlugins` or modify `known_marketplaces.json`. Hooks go directly in `settings.json`.
+For **Server mode**, replace the `env` block with `MNEMO_API_URL` and `MNEMO_API_TOKEN` instead.
 
-### 5. Create the database (Direct mode only)
+#### 5. Create the database (Direct mode only)
 
-The hooks auto-create the table on first run, but you can also do it manually:
+The hooks auto-create the table on first run, but you can do it manually:
 
 ```bash
 curl -sf --max-time 10 \
@@ -148,10 +191,9 @@ curl -sf --max-time 10 \
 
 For **Server mode**, the mnemo-server handles database setup — skip this step.
 
-### 6. Verify
+#### 6. Verify
 
 ```bash
-# Test that Claude Code starts normally
 claude -p "say hi"
 ```
 
@@ -172,12 +214,13 @@ Once installed, memory works automatically:
 claude-plugin/
 ├── README.md                    # This file
 ├── .claude-plugin/
-│   └── plugin.json              # Plugin metadata
+│   └── plugin.json              # Plugin manifest (name, version, hooks)
 ├── hooks/
 │   ├── common.sh                # Shared helpers (SQL, HTTP, mode detection)
-│   ├── hooks.json               # Hook definitions
+│   ├── hooks.json               # Hook definitions (used by plugin system)
 │   ├── session-start.sh         # Load memories on start
 │   ├── stop.sh                  # Save memory on stop
+│   ├── session-end.sh           # Cleanup placeholder
 │   └── user-prompt-submit.sh    # Inject memory hints
 └── skills/
     ├── memory-recall/SKILL.md   # On-demand search skill
@@ -188,7 +231,8 @@ claude-plugin/
 
 | Problem | Cause | Fix |
 |---|---|---|
-| Claude hangs on startup | Hook script path wrong or not executable | Check absolute paths in `settings.json`, run `chmod +x` |
+| Claude hangs on startup | Hook script path wrong or not executable | Check paths in `settings.json`, run `chmod +x` on hook scripts |
 | Memories not saving | Stop hook only fires on normal session end | Use `/memory-store` for on-demand saves |
 | `database` field ignored | TiDB Serverless HTTP API limitation | Already handled — hooks use `mnemos.memories` (fully-qualified) |
-| Plugin system error | Using `enabledPlugins` or marketplace config | Remove those — use `settings.json` hooks only |
+| Plugin not loading after marketplace install | Credentials not configured | Add `env` block to `~/.claude/settings.json` with DB or API credentials |
+| Hook approval prompt | Normal for marketplace plugins | Accept the hook permissions when prompted |

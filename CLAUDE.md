@@ -119,14 +119,23 @@ operations. The `userToken` is never sent to memory endpoints directly.
 
 ## Installing the Claude Code plugin
 
-If a user asks to install or set up the claude-plugin, read `claude-plugin/README.md` for the full guide. Quick summary:
+If a user asks to install or set up the claude-plugin, read `claude-plugin/README.md` for the full guide.
+
+**Marketplace install (recommended):**
+
+1. In Claude Code: `/plugin marketplace add qiffang/mnemos`
+2. Then: `/plugin install mnemo-memory@mnemos`
+3. Accept the hook permissions when prompted
+4. Add database credentials to `~/.claude/settings.json` under `env`:
+   - **Direct mode** (default): set `MNEMO_DB_HOST`, `MNEMO_DB_USER`, `MNEMO_DB_PASS`, `MNEMO_DB_NAME`
+   - **Server mode**: set `MNEMO_API_URL` and `MNEMO_API_TOKEN`
+5. Restart Claude Code
+
+**Manual install (alternative):**
 
 1. `chmod +x claude-plugin/hooks/*.sh`
 2. Copy skills: `cp -r claude-plugin/skills/memory-{recall,store} ~/.claude/skills/`
-3. Add to `~/.claude/settings.json`:
-   - **Direct mode** (default): set `MNEMO_DB_HOST`, `MNEMO_DB_USER`, `MNEMO_DB_PASS`, `MNEMO_DB_NAME` in `env`
-   - **Server mode**: set `MNEMO_API_URL` and `MNEMO_API_TOKEN` in `env`
-   - Add `hooks` entries pointing to `claude-plugin/hooks/{session-start,user-prompt-submit,stop}.sh` (use absolute paths)
+3. Add `env` + `hooks` entries to `~/.claude/settings.json` (see `claude-plugin/README.md` for full config)
 4. Direct mode only: hooks auto-create the `mnemos.memories` table on first run
 
 ## Installing the OpenCode plugin

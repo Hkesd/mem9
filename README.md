@@ -49,7 +49,7 @@ mnemos provides native plugins for major AI coding agent platforms:
 
 | Platform | Plugin | How It Works | Install Guide |
 |---|---|---|---|
-| **Claude Code** | Hooks + Skills | Auto-loads memories on session start, auto-saves on stop | [`claude-plugin/README.md`](claude-plugin/README.md) |
+| **Claude Code** | Hooks + Skills | Auto-loads memories on session start, auto-saves on stop | [`claude-plugin/README.md`](claude-plugin/README.md) — or run `/plugin marketplace add qiffang/mnemos` |
 | **OpenCode** | Plugin SDK | `system.transform` injects memories, `session.idle` auto-captures | [`opencode-plugin/README.md`](opencode-plugin/README.md) |
 | **OpenClaw** | Memory Plugin | Replaces built-in memory slot (`kind: "memory"`), framework manages lifecycle | [`openclaw-plugin/README.md`](openclaw-plugin/README.md) |
 | **Any HTTP client** | REST API / SQL | `curl` to mnemo-server or TiDB HTTP Data API directly | [API Reference](#api-reference-server-mode) |
@@ -108,10 +108,9 @@ For individual developers. Connect your agent directly to TiDB Cloud — no serv
 
 | Platform | Install command |
 |---|---|
-| Claude Code | See [`claude-plugin/README.md`](claude-plugin/README.md) — add hooks + env vars to `~/.claude/settings.json` |
+| Claude Code | **Marketplace**: `/plugin marketplace add qiffang/mnemos` then `/plugin install mnemo-memory@mnemos` <br/> **Manual**: See [`claude-plugin/README.md`](claude-plugin/README.md) |
 | OpenCode | `cd opencode-plugin && npm install` → add to `opencode.json` → set env vars |
 | OpenClaw | `cd openclaw-plugin && npm install` → add to `openclaw.json` |
-
 3. Set your database credentials (Claude Code / OpenCode use env vars, OpenClaw uses `openclaw.json` config):
 
 ```bash
