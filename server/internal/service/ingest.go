@@ -419,7 +419,7 @@ func (s *IngestService) reconcile(ctx context.Context, agentName, agentID, sessi
 
 1. Reference existing memories by their integer ID ONLY (0, 1, 2...). Never invent IDs.
 2. For UPDATE, always include the original text in "old_memory".
-3. For ADD, generate a new sequential integer ID.
+3. For ADD, the "id" field is ignored by the system — set it to "new" or omit it.
 4. When the fact adds detail or corrects an existing memory on the same topic, prefer UPDATE.
 5. When the fact covers a topic not in any existing memory, use ADD.
 6. When the fact means the same thing as an existing memory (even if worded differently), use NOOP.
@@ -431,11 +431,10 @@ Return ONLY valid JSON. No markdown fences.
 
 {
   "memory": [
-    {"id": "0", "text": "...", "event": "NOOP"},
-    {"id": "1", "text": "updated text", "event": "UPDATE", "old_memory": "original text"},
-    {"id": "2", "text": "...", "event": "DELETE"},
-    {"id": "3", "text": "brand new fact", "event": "ADD"}
-  ]
+    {"id": 0, "text": "...", "event": "NOOP"},
+    {"id": 1, "text": "updated text", "event": "UPDATE", "old_memory": "original text"},
+    {"id": 2, "text": "...", "event": "DELETE"},
+    {"id": "new", "text": "brand new fact", "event": "ADD"}
 }`
 
 	userPrompt := fmt.Sprintf(`Current memory contents:
@@ -510,6 +509,7 @@ Analyze the new facts and determine whether each should be added, updated, or de
 				slog.Warn("skipping UPDATE for pinned memory — treating as ADD", "id", realID)
 				newID, addErr := s.addInsight(ctx, agentName, agentID, sessionID, event.Text)
 				if addErr != nil {
+					slog.Warn("failed to add insight (pinned fallback)", "err", addErr)
 					warnings++
 					continue
 				}
@@ -558,9 +558,15 @@ Analyze the new facts and determine whether each should be added, updated, or de
 // gatherExistingMemories searches relevant memories for each fact, deduplicates
 // by ID, and returns a single flat list. Insights are scoped to the requesting
 // agent; pinned memories are space-level.
+//
+// Graceful degradation contract: on any search/list failure, the error is logged
+// and that source is skipped. A nil return means all sources failed or the store
+// is empty — the caller (reconcile) will fall through to addAllFacts, which may
+// create duplicates but never loses data.
 func (s *IngestService) gatherExistingMemories(ctx context.Context, agentID string, facts []string) []domain.Memory {
 	const perFactLimit = 5
 	const contentMaxLen = 150
+	const maxExistingMemories = 60 // Cap total results to prevent LLM token overflow
 
 	if s.embedder == nil && s.autoModel == "" {
 		// No vector search — fall back to listing recent memories.
@@ -582,7 +588,11 @@ func (s *IngestService) gatherExistingMemories(ctx context.Context, agentID stri
 				seen[m.ID] = struct{}{}
 				m.Content = truncateRunes(m.Content, contentMaxLen)
 				result = append(result, m)
-			}
+		}
+		}
+		if len(result) > maxExistingMemories {
+			slog.Warn("gatherExistingMemories: truncating no-vector results", "count", len(result), "max", maxExistingMemories)
+			result = result[:maxExistingMemories]
 		}
 		return result
 	}
@@ -632,6 +642,10 @@ func (s *IngestService) gatherExistingMemories(ctx context.Context, agentID stri
 		}
 	}
 
+	if len(result) > maxExistingMemories {
+		slog.Warn("gatherExistingMemories: truncating vector results", "count", len(result), "max", maxExistingMemories)
+		result = result[:maxExistingMemories]
+	}
 	return result
 }
 
