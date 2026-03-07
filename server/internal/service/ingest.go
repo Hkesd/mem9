@@ -586,16 +586,20 @@ func (s *IngestService) fetchExistingForReconcile(ctx context.Context, agentID s
 	if s.embedder == nil && s.autoModel == "" {
 		// No vector search available — fall back to listing.
 		// Insights scoped to agent; pinned is space-level (no AgentID filter).
+		// Reserve dedicated slots for pinned so they're never starved by insights.
+		const pinnedReserve = 5
+		insightLimit := reconcileMemoryCap - pinnedReserve
+
+		pinnedMems, _, pinnedErr := s.memories.List(ctx, domain.MemoryFilter{
+			State:      "active",
+			MemoryType: "pinned",
+			Limit:      pinnedReserve,
+		})
 		insightMems, _, insightErr := s.memories.List(ctx, domain.MemoryFilter{
 			State:      "active",
 			MemoryType: "insight",
 			AgentID:    agentID,
-			Limit:      reconcileMemoryCap,
-		})
-		pinnedMems, _, pinnedErr := s.memories.List(ctx, domain.MemoryFilter{
-			State:      "active",
-			MemoryType: "pinned",
-			Limit:      reconcileMemoryCap,
+			Limit:      insightLimit,
 		})
 		if insightErr != nil && pinnedErr != nil {
 			return nil, fmt.Errorf("list insights: %w; list pinned: %w", insightErr, pinnedErr)
@@ -606,10 +610,10 @@ func (s *IngestService) fetchExistingForReconcile(ctx context.Context, agentID s
 		if pinnedErr != nil {
 			slog.Warn("failed to list pinned memories for reconcile", "err", pinnedErr)
 		}
-		// Merge and cap at reconcileMemoryCap.
+		// Merge: pinned first (guaranteed slots), then insights fill remainder.
 		seen := make(map[string]struct{})
 		var memories []domain.Memory
-		for _, list := range [][]domain.Memory{insightMems, pinnedMems} {
+		for _, list := range [][]domain.Memory{pinnedMems, insightMems} {
 			for _, m := range list {
 				if _, ok := seen[m.ID]; ok {
 					continue
