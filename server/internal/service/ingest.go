@@ -80,6 +80,7 @@ func NewIngestService(
 
 // Ingest runs the pipeline: extract facts from conversation, reconcile with existing memories.
 func (s *IngestService) Ingest(ctx context.Context, agentName string, req IngestRequest) (*IngestResult, error) {
+	slog.Info("ingest pipeline started", "agent", agentName, "agent_id", req.AgentID, "session_id", req.SessionID, "messages", len(req.Messages), "mode", req.Mode)
 	if len(req.Messages) == 0 {
 		return nil, &domain.ValidationError{Field: "messages", Message: "required"}
 	}
@@ -137,7 +138,7 @@ func (s *IngestService) ingestRaw(ctx context.Context, agentName string, req Ing
 		var err error
 		embedding, err = s.embedder.Embed(ctx, content)
 		if err != nil {
-			slog.Warn("embedding failed for raw ingest", "err", err)
+			return nil, fmt.Errorf("embed for raw ingest: %w", err)
 		}
 	}
 
@@ -279,6 +280,7 @@ Return ONLY valid JSON. No markdown fences, no explanation.
 			facts = append(facts, f)
 		}
 	}
+	slog.Info("facts extracted", "count", len(facts))
 	return facts, nil
 }
 
@@ -288,7 +290,11 @@ Return ONLY valid JSON. No markdown fences, no explanation.
 // the existing knowledge base, enabling better ADD/UPDATE/DELETE/NOOP decisions.
 func (s *IngestService) reconcile(ctx context.Context, agentName, agentID, sessionID string, facts []string) ([]string, int, error) {
 	// Step 1: For each fact, search for relevant existing memories and collect them.
-	existingMemories := s.gatherExistingMemories(ctx, agentID, facts)
+	existingMemories, gatherErr := s.gatherExistingMemories(ctx, agentID, facts)
+	if gatherErr != nil {
+		return nil, 0, fmt.Errorf("gather existing memories: %w", gatherErr)
+	}
+	slog.Info("gathered existing memories for reconciliation", "facts", len(facts), "existing", len(existingMemories))
 
 	if len(existingMemories) == 0 {
 		return s.addAllFacts(ctx, agentName, agentID, sessionID, facts)
@@ -483,15 +489,10 @@ Analyze the new facts and determine whether each should be added, updated, or de
 }
 
 // gatherExistingMemories searches relevant memories for each fact, deduplicates
-// by ID, and returns a single flat list. All memories (pinned + insight) belong
-// to the same agent, so a single query with agent_id scoping is sufficient.
-//
-// Graceful degradation contract: on any search/list failure, the error is logged
-// and that source is skipped. A nil return means all sources failed or the store
-// is empty — the caller (reconcile) will fall through to addAllFacts, which may
-// create duplicates but never loses data. With the safer fallback (P1-5), this
-// now returns nil meaning reconciliation is skipped.
-func (s *IngestService) gatherExistingMemories(ctx context.Context, agentID string, facts []string) []domain.Memory {
+// by ID, and returns a single flat list. Returns an error if any search backend
+// fails — on TiDB Serverless, search features are always available so failures
+// indicate a real problem that should be surfaced.
+func (s *IngestService) gatherExistingMemories(ctx context.Context, agentID string, facts []string) ([]domain.Memory, error) {
 	const perFactLimit = 5
 	const contentMaxLen = 150
 	const maxExistingMemories = 60
@@ -503,7 +504,7 @@ func (s *IngestService) gatherExistingMemories(ctx context.Context, agentID stri
 		AgentID:    agentID,
 	}
 
-	// No vector search available — degrade gracefully.
+	// No vector search available.
 	if s.embedder == nil && s.autoModel == "" {
 		if s.memories.FTSAvailable() {
 			// FTS-only deployment: run per-fact FTS search (leg 2 only).
@@ -522,30 +523,17 @@ func (s *IngestService) gatherExistingMemories(ctx context.Context, agentID stri
 			for _, fact := range facts {
 				kwMatches, kwErr := s.memories.FTSSearch(ctx, fact, filter, perFactLimit)
 				if kwErr != nil {
-					slog.Warn("FTS search failed during reconcile (FTS-only mode)", "err", kwErr)
-					continue
+					return nil, fmt.Errorf("FTS search for fact %q: %w", truncateRunes(fact, 50), kwErr)
 				}
 				addUnseen(kwMatches)
 			}
 			if len(result) > maxExistingMemories {
 				result = result[:maxExistingMemories]
 			}
-			return result
+			return result, nil
 		}
-		// No vector, no FTS — fall back to List().
-		filter.Limit = perFactLimit * len(facts)
-		if filter.Limit > maxExistingMemories {
-			filter.Limit = maxExistingMemories
-		}
-		mems, _, err := s.memories.List(ctx, filter)
-		if err != nil {
-			slog.Warn("list memories for reconcile failed", "err", err)
-			return nil
-		}
-		for i := range mems {
-			mems[i].Content = truncateRunes(mems[i].Content, contentMaxLen)
-		}
-		return mems
+		// No vector, no FTS — should not happen on TiDB Serverless.
+		return nil, fmt.Errorf("no search backend available: autoModel and embedder are both unconfigured, FTS is unavailable")
 	}
 
 	seen := make(map[string]struct{})
@@ -569,19 +557,22 @@ func (s *IngestService) gatherExistingMemories(ctx context.Context, agentID stri
 	for _, fact := range facts {
 		// Leg 1: Vector search.
 		var vecMatches []domain.Memory
-		var vecErr error
 		if s.autoModel != "" {
+			var vecErr error
 			vecMatches, vecErr = s.memories.AutoVectorSearch(ctx, fact, filter, perFactLimit)
+			if vecErr != nil {
+				return nil, fmt.Errorf("auto vector search for fact %q: %w", truncateRunes(fact, 50), vecErr)
+			}
 		} else {
 			vec, embedErr := s.embedder.Embed(ctx, fact)
 			if embedErr != nil {
-				slog.Warn("embedding failed for fact during reconcile", "err", embedErr)
-			} else {
-				vecMatches, vecErr = s.memories.VectorSearch(ctx, vec, filter, perFactLimit)
+				return nil, fmt.Errorf("embed fact %q: %w", truncateRunes(fact, 50), embedErr)
 			}
-		}
-		if vecErr != nil {
-			slog.Warn("vector search failed during reconcile", "err", vecErr)
+			var vecErr error
+			vecMatches, vecErr = s.memories.VectorSearch(ctx, vec, filter, perFactLimit)
+			if vecErr != nil {
+				return nil, fmt.Errorf("vector search for fact %q: %w", truncateRunes(fact, 50), vecErr)
+			}
 		}
 		addUnseen(vecMatches, true) // Apply similarity threshold to vector results
 
@@ -594,16 +585,16 @@ func (s *IngestService) gatherExistingMemories(ctx context.Context, agentID stri
 			kwMatches, kwErr = s.memories.KeywordSearch(ctx, fact, filter, perFactLimit)
 		}
 		if kwErr != nil {
-			slog.Warn("keyword search failed during reconcile", "err", kwErr)
+			return nil, fmt.Errorf("keyword/FTS search for fact %q: %w", truncateRunes(fact, 50), kwErr)
 		}
 		addUnseen(kwMatches, false) // No threshold for keyword/FTS results
 	}
 
 	if len(result) > maxExistingMemories {
-		slog.Warn("gatherExistingMemories: truncating results", "count", len(result), "max", maxExistingMemories)
+		slog.Info("gatherExistingMemories: truncating results", "count", len(result), "max", maxExistingMemories)
 		result = result[:maxExistingMemories]
 	}
-	return result
+	return result, nil
 }
 
 // addAllFacts adds all facts as new insights (fallback when reconciliation is
@@ -630,7 +621,7 @@ func (s *IngestService) addInsight(ctx context.Context, agentName, agentID, sess
 		var err error
 		embedding, err = s.embedder.Embed(ctx, content)
 		if err != nil {
-			slog.Warn("embedding failed for insight", "err", err)
+			return "", fmt.Errorf("embed insight: %w", err)
 		}
 	}
 
@@ -666,7 +657,7 @@ func (s *IngestService) updateInsight(ctx context.Context, agentName, agentID, s
 		var err error
 		embedding, err = s.embedder.Embed(ctx, newContent)
 		if err != nil {
-			slog.Warn("embedding failed for updated insight", "err", err)
+			return "", fmt.Errorf("embed updated insight: %w", err)
 		}
 	}
 

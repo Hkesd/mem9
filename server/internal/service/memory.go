@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"sort"
 	"strconv"
@@ -76,6 +77,7 @@ func (s *MemoryService) Search(ctx context.Context, filter domain.MemoryFilter) 
 	if filter.Query == "" {
 		return s.memories.List(ctx, filter)
 	}
+	slog.Info("memory search", "query", filter.Query, "auto_model", s.autoModel, "fts", s.memories.FTSAvailable())
 	if s.autoModel != "" {
 		return s.autoHybridSearch(ctx, filter)
 	}
@@ -85,7 +87,8 @@ func (s *MemoryService) Search(ctx context.Context, filter domain.MemoryFilter) 
 	if s.memories.FTSAvailable() {
 		return s.ftsOnlySearch(ctx, filter)
 	}
-	return s.memories.List(ctx, filter)
+	// No vector, no FTS — should not happen on TiDB Serverless.
+	return nil, 0, fmt.Errorf("no search backend available: autoModel and embedder are both unconfigured, FTS is unavailable")
 }
 
 const rrfK = 60.0
@@ -126,9 +129,9 @@ func (s *MemoryService) ftsOnlySearch(ctx context.Context, filter domain.MemoryF
 
 	ftsResults, err := s.memories.FTSSearch(ctx, filter.Query, filter, fetchLimit)
 	if err != nil {
-		slog.Warn("FTS search failed, falling back to list", "err", err)
-		return s.memories.List(ctx, filter)
+		return nil, 0, fmt.Errorf("FTS search: %w", err)
 	}
+	slog.Info("fts search completed", "query", filter.Query, "results", len(ftsResults))
 
 	page, total := s.paginate(ftsResults, offset, limit)
 	return page, total, nil
@@ -147,39 +150,30 @@ func (s *MemoryService) hybridSearch(ctx context.Context, filter domain.MemoryFi
 
 	queryVec, err := s.embedder.Embed(ctx, filter.Query)
 	if err != nil {
-		slog.Warn("embedding failed, falling back to keyword search", "err", err)
-		if s.memories.FTSAvailable() {
-			return s.ftsOnlySearch(ctx, filter)
-		}
-		return s.memories.List(ctx, filter)
+		return nil, 0, fmt.Errorf("embed query for search: %w", err)
 	}
 
 	vecResults, vecErr := s.memories.VectorSearch(ctx, queryVec, filter, fetchLimit)
 	if vecErr != nil {
-		slog.Warn("vector leg skipped", "err", vecErr)
-		vecResults = nil
+		return nil, 0, fmt.Errorf("vector search: %w", vecErr)
 	}
 
 	var kwResults []domain.Memory
-	var kwErr error
 	if s.memories.FTSAvailable() {
+		var kwErr error
 		kwResults, kwErr = s.memories.FTSSearch(ctx, filter.Query, filter, fetchLimit)
 		if kwErr != nil {
-			slog.Warn("keyword leg skipped", "err", kwErr)
-			kwResults = nil
+			return nil, 0, fmt.Errorf("FTS search: %w", kwErr)
 		}
 	} else {
+		var kwErr error
 		kwResults, kwErr = s.memories.KeywordSearch(ctx, filter.Query, filter, fetchLimit)
 		if kwErr != nil {
-			slog.Warn("keyword leg skipped", "err", kwErr)
-			kwResults = nil
+			return nil, 0, fmt.Errorf("keyword search: %w", kwErr)
 		}
 	}
 
-	if vecErr != nil && kwErr != nil {
-		slog.Error("both search legs failed")
-		return []domain.Memory{}, 0, nil
-	}
+	slog.Info("hybrid search completed", "query", filter.Query, "vec_results", len(vecResults), "kw_results", len(kwResults))
 
 	scores := rrfMerge(kwResults, vecResults)
 	mems := collectMems(kwResults, vecResults)
@@ -203,30 +197,25 @@ func (s *MemoryService) autoHybridSearch(ctx context.Context, filter domain.Memo
 
 	vecResults, vecErr := s.memories.AutoVectorSearch(ctx, filter.Query, filter, fetchLimit)
 	if vecErr != nil {
-		slog.Warn("vector leg skipped", "err", vecErr)
-		vecResults = nil
+		return nil, 0, fmt.Errorf("auto vector search: %w", vecErr)
 	}
 
 	var kwResults []domain.Memory
-	var kwErr error
 	if s.memories.FTSAvailable() {
+		var kwErr error
 		kwResults, kwErr = s.memories.FTSSearch(ctx, filter.Query, filter, fetchLimit)
 		if kwErr != nil {
-			slog.Warn("keyword leg skipped", "err", kwErr)
-			kwResults = nil
+			return nil, 0, fmt.Errorf("FTS search: %w", kwErr)
 		}
 	} else {
+		var kwErr error
 		kwResults, kwErr = s.memories.KeywordSearch(ctx, filter.Query, filter, fetchLimit)
 		if kwErr != nil {
-			slog.Warn("keyword leg skipped", "err", kwErr)
-			kwResults = nil
+			return nil, 0, fmt.Errorf("keyword search: %w", kwErr)
 		}
 	}
 
-	if vecErr != nil && kwErr != nil {
-		slog.Error("both search legs failed")
-		return []domain.Memory{}, 0, nil
-	}
+	slog.Info("auto hybrid search completed", "query", filter.Query, "vec_results", len(vecResults), "kw_results", len(kwResults))
 
 	scores := rrfMerge(kwResults, vecResults)
 	mems := collectMems(kwResults, vecResults)

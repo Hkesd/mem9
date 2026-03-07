@@ -650,7 +650,10 @@ func TestGatherExistingMemoriesFiltersLowScoreVectorResults(t *testing.T) {
 
 	svc := NewIngestService(memRepo, nil, nil, "auto-model", ModeSmart)
 
-	result := svc.gatherExistingMemories(context.Background(), "agent-1", []string{"test fact"})
+	result, err := svc.gatherExistingMemories(context.Background(), "agent-1", []string{"test fact"})
+	if err != nil {
+		t.Fatalf("gatherExistingMemories() error = %v", err)
+	}
 
 	// Only the high-score result should be included.
 	if len(result) != 1 {
@@ -678,7 +681,10 @@ func TestGatherExistingMemoriesFTSOnlyMode(t *testing.T) {
 	// No embedder, no autoModel — FTS-only deployment.
 	svc := NewIngestService(memRepo, nil, nil, "", ModeSmart)
 
-	result := svc.gatherExistingMemories(context.Background(), "agent-1", []string{"Go programming", "TiDB database"})
+	result, err := svc.gatherExistingMemories(context.Background(), "agent-1", []string{"Go programming", "TiDB database"})
+	if err != nil {
+		t.Fatalf("gatherExistingMemories() error = %v", err)
+	}
 
 	// FTS results should appear (2 unique memories, returned for both facts but deduped).
 	if len(result) != 2 {
@@ -714,7 +720,10 @@ func TestGatherExistingMemoriesHybridDedup(t *testing.T) {
 
 	svc := NewIngestService(memRepo, nil, nil, "auto-model", ModeSmart)
 
-	result := svc.gatherExistingMemories(context.Background(), "agent-1", []string{"dark mode preference"})
+	result, err := svc.gatherExistingMemories(context.Background(), "agent-1", []string{"dark mode preference"})
+	if err != nil {
+		t.Fatalf("gatherExistingMemories() error = %v", err)
+	}
 
 	// shared-1 should appear once (deduped), vec-only and fts-only each once = 3 total.
 	if len(result) != 3 {
