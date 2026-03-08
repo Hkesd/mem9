@@ -17,12 +17,13 @@ type ZeroClient struct {
 }
 
 type ZeroInstance struct {
-	ID       string `json:"id"`
-	Host     string `json:"host"`
-	Port     int    `json:"port"`
-	Username string `json:"username"`
-	Password string `json:"password"`
-	ClaimURL string `json:"claim_url"`
+	ID        string     `json:"id"`
+	Host      string     `json:"host"`
+	Port      int        `json:"port"`
+	Username  string     `json:"username"`
+	Password  string     `json:"password"`
+	ClaimURL  string     `json:"claim_url"`
+	ClaimExpiresAt *time.Time `json:"claim_expires_at,omitempty"`
 }
 
 func NewZeroClient(baseURL string) *ZeroClient {
@@ -41,6 +42,7 @@ type zeroCreateRequest struct {
 type zeroCreateResponse struct {
 	Instance struct {
 		ID         string `json:"id"`
+		ExpiresAt  string `json:"expiresAt"`
 		Connection struct {
 			Host     string `json:"host"`
 			Port     int    `json:"port"`
@@ -90,12 +92,18 @@ func (c *ZeroClient) CreateInstance(ctx context.Context, tag string) (*ZeroInsta
 		return nil, fmt.Errorf("zero api create instance: decode response: %w", err)
 	}
 
-	return &ZeroInstance{
+	inst := &ZeroInstance{
 		ID:       parsed.Instance.ID,
 		Host:     parsed.Instance.Connection.Host,
 		Port:     parsed.Instance.Connection.Port,
 		Username: parsed.Instance.Connection.Username,
 		Password: parsed.Instance.Connection.Password,
 		ClaimURL: parsed.Instance.ClaimInfo.ClaimURL,
-	}, nil
+	}
+	if parsed.Instance.ExpiresAt != "" {
+		if t, err := time.Parse(time.RFC3339, parsed.Instance.ExpiresAt); err == nil {
+			inst.ClaimExpiresAt = &t
+		}
+	}
+	return inst, nil
 }

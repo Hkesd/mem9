@@ -96,7 +96,8 @@ type Tenant struct {
 	// Provisioning metadata
 	Provider  string `json:"provider"`
 	ClusterID string `json:"cluster_id,omitempty"`
-	ClaimURL  string `json:"claim_url,omitempty"`
+	ClaimURL       string     `json:"-"`
+	ClaimExpiresAt *time.Time `json:"-"`
 
 	// Lifecycle
 	Status        TenantStatus `json:"status"`
@@ -129,7 +130,6 @@ type TenantInfo struct {
 	Name        string       `json:"name"`
 	Status      TenantStatus `json:"status"`
 	Provider    string       `json:"provider"`
-	ClaimURL    string       `json:"claim_url,omitempty"`
 	MemoryCount int          `json:"memory_count"`
 	CreatedAt   time.Time    `json:"created_at"`
 }

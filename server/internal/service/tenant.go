@@ -77,8 +77,7 @@ func NewTenantService(
 
 // ProvisionResult is the output of Provision.
 type ProvisionResult struct {
-	ID       string `json:"id"`
-	ClaimURL string `json:"claim_url,omitempty"`
+	ID string `json:"id"`
 }
 
 // Provision creates a new TiDB Zero instance and registers it as a tenant.
@@ -108,6 +107,7 @@ func (s *TenantService) Provision(ctx context.Context) (*ProvisionResult, error)
 		Provider:      "tidb_zero",
 		ClusterID:     instance.ID,
 		ClaimURL:      instance.ClaimURL,
+		ClaimExpiresAt: instance.ClaimExpiresAt,
 		Status:        domain.TenantProvisioning,
 		SchemaVersion: 0,
 	}
@@ -130,8 +130,7 @@ func (s *TenantService) Provision(ctx context.Context) (*ProvisionResult, error)
 	}
 
 	return &ProvisionResult{
-		ID:       tenantID,
-		ClaimURL: instance.ClaimURL,
+		ID: tenantID,
 	}, nil
 }
 
@@ -160,7 +159,6 @@ func (s *TenantService) GetInfo(ctx context.Context, tenantID string) (*domain.T
 		Name:        t.Name,
 		Status:      t.Status,
 		Provider:    t.Provider,
-		ClaimURL:    t.ClaimURL,
 		MemoryCount: count,
 		CreatedAt:   t.CreatedAt,
 	}, nil

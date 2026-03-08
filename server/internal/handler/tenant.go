@@ -5,8 +5,7 @@ import (
 )
 
 type provisionResponse struct {
-	ID       string `json:"id"`
-	ClaimURL string `json:"claim_url,omitempty"`
+	ID string `json:"id"`
 }
 
 func (s *Server) provisionMem9s(w http.ResponseWriter, r *http.Request) {
@@ -17,8 +16,7 @@ func (s *Server) provisionMem9s(w http.ResponseWriter, r *http.Request) {
 	}
 
 	respond(w, http.StatusCreated, provisionResponse{
-		ID:       result.ID,
-		ClaimURL: result.ClaimURL,
+		ID: result.ID,
 	})
 }
 

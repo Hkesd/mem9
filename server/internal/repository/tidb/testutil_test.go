@@ -75,6 +75,7 @@ func createTables(db *sql.DB) error {
 		provider        VARCHAR(50)   NOT NULL,
 		cluster_id      VARCHAR(255)  NULL,
 		claim_url       TEXT          NULL,
+		claim_expires_at TIMESTAMP    NULL,
 		status          VARCHAR(20)   NOT NULL DEFAULT 'provisioning',
 		schema_version  INT           NOT NULL DEFAULT 1,
 		created_at      TIMESTAMP     DEFAULT CURRENT_TIMESTAMP,

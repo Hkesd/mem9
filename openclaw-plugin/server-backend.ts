@@ -12,7 +12,6 @@ import type {
 
 type ProvisionMem9sResponse = {
   id: string;
-  claim_url?: string;
 };
 
 export class ServerBackend implements MemoryBackend {

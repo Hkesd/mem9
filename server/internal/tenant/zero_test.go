@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestZeroClient_CreateInstance_Success(t *testing.T) {
@@ -34,6 +35,7 @@ func TestZeroClient_CreateInstance_Success(t *testing.T) {
 		_, _ = w.Write([]byte(`{
   "instance": {
     "id": "cluster-test",
+    "expiresAt": "2026-04-07T12:00:00Z",
     "connection": {
       "host": "test.tidbcloud.com",
       "port": 4000,
@@ -73,6 +75,13 @@ func TestZeroClient_CreateInstance_Success(t *testing.T) {
 	}
 	if instance.ClaimURL != "https://tidbcloud.com/claim/test" {
 		t.Fatalf("ClaimURL = %q, want %q", instance.ClaimURL, "https://tidbcloud.com/claim/test")
+	}
+	if instance.ClaimExpiresAt == nil {
+		t.Fatal("ClaimExpiresAt = nil, want non-nil")
+	}
+	wantExpiry := "2026-04-07T12:00:00Z"
+	if got := instance.ClaimExpiresAt.Format(time.RFC3339); got != wantExpiry {
+		t.Fatalf("ClaimExpiresAt = %q, want %q", got, wantExpiry)
 	}
 }
 

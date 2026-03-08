@@ -240,12 +240,8 @@ const mnemoPlugin = {
     const registerTenant = async (agentName: string): Promise<string> => {
       const backend = new ServerBackend(effectiveApiUrl, "", agentName);
       const result = await backend.register();
-      const claimUrl = result.claim_url ?? "(not provided)";
       api.logger.info(
         `[mnemo] *** Auto-provisioned tenant_id=${result.id} *** Save this tenant ID to your config as tenantID`
-      );
-      api.logger.info(
-        `[mnemo] Claim your TiDB instance at: ${claimUrl}`
       );
       return result.id;
     };

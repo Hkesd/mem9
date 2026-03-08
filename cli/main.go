@@ -30,8 +30,7 @@ var (
 // --- Response Types ---
 
 type ProvisionResponse struct {
-	ID       string `json:"id"`
-	ClaimURL string `json:"claim_url,omitempty"`
+	ID string `json:"id"`
 }
 
 type Memory struct {

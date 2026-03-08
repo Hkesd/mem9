@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"time"
 
 	"github.com/qiffang/mnemos/server/internal/domain"
 )
@@ -18,10 +19,10 @@ func NewTenantRepo(db *sql.DB) *TenantRepoImpl {
 
 func (r *TenantRepoImpl) Create(ctx context.Context, t *domain.Tenant) error {
 	_, err := r.db.ExecContext(ctx,
-		`INSERT INTO tenants (id, name, db_host, db_port, db_user, db_password, db_name, db_tls, provider, cluster_id, claim_url, status, schema_version, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
+		`INSERT INTO tenants (id, name, db_host, db_port, db_user, db_password, db_name, db_tls, provider, cluster_id, claim_url, claim_expires_at, status, schema_version, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
 		t.ID, t.Name, t.DBHost, t.DBPort, t.DBUser, t.DBPassword, t.DBName, t.DBTLS,
-		t.Provider, nullString(t.ClusterID), nullString(t.ClaimURL), string(t.Status), t.SchemaVersion,
+		t.Provider, nullString(t.ClusterID), nullString(t.ClaimURL), nullTime(t.ClaimExpiresAt), string(t.Status), t.SchemaVersion,
 	)
 	if err != nil {
 		return fmt.Errorf("create tenant: %w", err)
@@ -31,7 +32,7 @@ func (r *TenantRepoImpl) Create(ctx context.Context, t *domain.Tenant) error {
 
 func (r *TenantRepoImpl) GetByID(ctx context.Context, id string) (*domain.Tenant, error) {
 	row := r.db.QueryRowContext(ctx,
-		`SELECT id, name, db_host, db_port, db_user, db_password, db_name, db_tls, provider, cluster_id, claim_url,
+		`SELECT id, name, db_host, db_port, db_user, db_password, db_name, db_tls, provider, cluster_id, claim_url, claim_expires_at,
 		 status, schema_version, created_at, updated_at, deleted_at
 		 FROM tenants WHERE id = ?`, id,
 	)
@@ -40,7 +41,7 @@ func (r *TenantRepoImpl) GetByID(ctx context.Context, id string) (*domain.Tenant
 
 func (r *TenantRepoImpl) GetByName(ctx context.Context, name string) (*domain.Tenant, error) {
 	row := r.db.QueryRowContext(ctx,
-		`SELECT id, name, db_host, db_port, db_user, db_password, db_name, db_tls, provider, cluster_id, claim_url,
+		`SELECT id, name, db_host, db_port, db_user, db_password, db_name, db_tls, provider, cluster_id, claim_url, claim_expires_at,
 		 status, schema_version, created_at, updated_at, deleted_at
 		 FROM tenants WHERE name = ? AND status != 'deleted'`, name,
 	)
@@ -128,10 +129,11 @@ func (r *TenantTokenRepoImpl) ListByTenant(ctx context.Context, tenantID string)
 func scanTenant(row *sql.Row) (*domain.Tenant, error) {
 	var t domain.Tenant
 	var clusterID, claimURL sql.NullString
+	var claimExpiresAt sql.NullTime
 	var status string
 	var deletedAt sql.NullTime
 	if err := row.Scan(&t.ID, &t.Name, &t.DBHost, &t.DBPort, &t.DBUser, &t.DBPassword, &t.DBName, &t.DBTLS,
-		&t.Provider, &clusterID, &claimURL, &status, &t.SchemaVersion, &t.CreatedAt, &t.UpdatedAt, &deletedAt); err != nil {
+		&t.Provider, &clusterID, &claimURL, &claimExpiresAt, &status, &t.SchemaVersion, &t.CreatedAt, &t.UpdatedAt, &deletedAt); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, domain.ErrNotFound
 		}
@@ -140,8 +142,18 @@ func scanTenant(row *sql.Row) (*domain.Tenant, error) {
 	t.ClusterID = clusterID.String
 	t.ClaimURL = claimURL.String
 	t.Status = domain.TenantStatus(status)
+	if claimExpiresAt.Valid {
+		t.ClaimExpiresAt = &claimExpiresAt.Time
+	}
 	if deletedAt.Valid {
 		t.DeletedAt = &deletedAt.Time
 	}
 	return &t, nil
+}
+
+func nullTime(t *time.Time) sql.NullTime {
+	if t == nil {
+		return sql.NullTime{}
+	}
+	return sql.NullTime{Time: *t, Valid: true}
 }
