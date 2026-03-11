@@ -80,7 +80,7 @@ const (
 	TenantDeleted      TenantStatus = "deleted"
 )
 
-// Tenant represents a provisioned customer with a dedicated TiDB cluster.
+// Tenant represents a provisioned customer with a dedicated database.
 type Tenant struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
@@ -107,14 +107,29 @@ type Tenant struct {
 	DeletedAt     *time.Time   `json:"-"`
 }
 
-// DSN builds a MySQL connection string for this tenant's database.
-func (t *Tenant) DSN() string {
-	dsn := fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?parseTime=true",
-		t.DBUser, t.DBPassword, t.DBHost, t.DBPort, t.DBName)
-	if t.DBTLS {
-		dsn += "&tls=true"
+// DSNForBackend builds a connection string for the specified backend.
+// backend must be "postgres" or "tidb" (MySQL-compatible); empty string panics.
+func (t *Tenant) DSNForBackend(backend string) string {
+	if backend == "" {
+		panic("DSNForBackend: backend must be specified explicitly (\"postgres\" or \"tidb\")")
 	}
-	return dsn
+	switch backend {
+	case "postgres":
+		sslmode := "disable"
+		if t.DBTLS {
+			sslmode = "require"
+		}
+		return fmt.Sprintf("postgres://%s:%s@%s:%d/%s?sslmode=%s",
+			t.DBUser, t.DBPassword, t.DBHost, t.DBPort, t.DBName, sslmode)
+	default:
+		// MySQL/TiDB format
+		dsn := fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?parseTime=true",
+			t.DBUser, t.DBPassword, t.DBHost, t.DBPort, t.DBName)
+		if t.DBTLS {
+			dsn += "&tls=true"
+		}
+		return dsn
+	}
 }
 
 // TenantInfo describes tenant metadata.
