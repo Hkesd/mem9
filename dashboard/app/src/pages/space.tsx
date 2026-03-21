@@ -28,8 +28,17 @@ import {
 } from "@/api/queries";
 import { useSourceMemories } from "@/api/source-memories";
 import { useSpaceAnalysis } from "@/api/analysis-queries";
-import { buildFacetStats } from "@/api/analysis-helpers";
-import { filterMemoriesForView } from "@/lib/memory-filters";
+import {
+  filterMemoriesForView,
+  type MemoryTagResolver,
+} from "@/lib/memory-filters";
+import {
+  getCombinedTagsForMemory,
+  getDerivedTagOrigin,
+  getDerivedTagsForMemory,
+  type LocalDerivedSignalIndex,
+} from "@/lib/memory-derived-signals";
+import { useBackgroundDerivedSignals } from "@/lib/memory-insight-background";
 import { getActiveSpaceId, clearSpace, maskSpaceId } from "@/lib/session";
 import { MemoryCard } from "@/components/space/memory-card";
 import { DetailPanel } from "@/components/space/detail-panel";
@@ -41,13 +50,15 @@ import { TimeRangeSelector } from "@/components/space/time-range";
 import { TopicStrip } from "@/components/space/topic-strip";
 import { TagStrip, type TagSummary } from "@/components/space/tag-strip";
 import { AnalysisPanel } from "@/components/space/analysis-panel";
-import { MemoryPulseOverview } from "@/components/space/memory-pulse-overview";
+import { MemoryOverviewTabs } from "@/components/space/memory-overview-tabs";
 import { MobileAnalysisSheet } from "@/components/space/mobile-analysis-sheet";
 import { MobileDetailSheet } from "@/components/space/mobile-detail-sheet";
 import { ExportDialog } from "@/components/space/export-dialog";
 import { ImportDialog } from "@/components/space/import-dialog";
 import { ImportStatusDialog } from "@/components/space/import-status";
 import { features } from "@/config/features";
+import { formatInsightCategoryLabel } from "@/lib/memory-insight";
+import { normalizeTagSignal } from "@/lib/tag-signals";
 import type {
   Memory,
   MemoryFacet,
@@ -55,12 +66,13 @@ import type {
   MemoryStats,
   TopicSummary,
 } from "@/types/memory";
-import type { AnalysisCategory, AnalysisFacetStat } from "@/types/analysis";
+import type { AnalysisCategory } from "@/types/analysis";
 import type {
   TimeRangePreset,
   TimelineSelection,
 } from "@/types/time-range";
 import { isValidTimelineSelection } from "@/types/time-range";
+import type { OverviewMemorySelectionSource } from "@/components/space/memory-overview-tabs";
 
 const route = getRouteApi("/space");
 const LOCAL_PAGE_SIZE = 50;
@@ -97,21 +109,11 @@ const FACETS: MemoryFacet[] = [
   "other",
 ];
 
-function humanizeAnalysisCategory(category: AnalysisCategory): string {
-  return category
-    .split("_")
-    .filter(Boolean)
-    .map((segment) => segment.charAt(0).toUpperCase() + segment.slice(1))
-    .join(" ");
-}
-
 function formatAnalysisCategoryLabel(
   t: ReturnType<typeof useTranslation>["t"],
   category: AnalysisCategory,
 ): string {
-  const key = `analysis.category.${category}`;
-  const translated = t(key);
-  return translated === key ? humanizeAnalysisCategory(category) : translated;
+  return formatInsightCategoryLabel(category, t);
 }
 
 function buildStats(memories: Memory[]): MemoryStats {
@@ -141,18 +143,44 @@ function buildTopicSummary(memories: Memory[]): TopicSummary {
   };
 }
 
-function buildAnalysisTagStats(memories: Memory[]): AnalysisFacetStat[] {
-  const counts: Record<string, number> = {};
+function createTagResolver(signalIndex: LocalDerivedSignalIndex): MemoryTagResolver {
+  return (memory) => getCombinedTagsForMemory(memory, signalIndex);
+}
+
+function buildTagOptions(
+  memories: Memory[],
+  signalIndex: LocalDerivedSignalIndex,
+): TagSummary[] {
+  const counts = new Map<string, { tag: string; count: number; origin?: TagSummary["origin"] }>();
 
   for (const memory of memories) {
-    for (const tag of memory.tags) {
-      const normalized = tag.trim();
-      if (!normalized) continue;
-      counts[normalized] = (counts[normalized] ?? 0) + 1;
+    for (const tag of getCombinedTagsForMemory(memory, signalIndex)) {
+      const normalized = normalizeTagSignal(tag);
+      if (!normalized) {
+        continue;
+      }
+
+      const current = counts.get(normalized);
+      if (current) {
+        current.count += 1;
+        continue;
+      }
+
+      counts.set(normalized, {
+        tag,
+        count: 1,
+        origin: signalIndex.tagSourceByValue.get(normalized),
+      });
     }
   }
 
-  return buildFacetStats(counts);
+  return [...counts.values()]
+    .sort(
+      (left, right) =>
+        right.count - left.count ||
+        left.tag.localeCompare(right.tag, "en"),
+    )
+    .slice(0, 24);
 }
 
 function scrollToMemoryList(): void {
@@ -209,6 +237,7 @@ export function SpacePage() {
 
   // UI state
   const [selected, setSelected] = useState<Memory | null>(null);
+  const [selectedDetailMode, setSelectedDetailMode] = useState<"panel" | "sheet">("panel");
   const [searchInput, setSearchInput] = useState(search.q ?? "");
   const [addOpen, setAddOpen] = useState(false);
   const [editTarget, setEditTarget] = useState<Memory | null>(null);
@@ -268,6 +297,22 @@ export function SpacePage() {
     }
   }, [isDesktopViewport]);
 
+  useEffect(() => {
+    if (!selected) {
+      setSelectedDetailMode("panel");
+    }
+  }, [selected]);
+
+  const openMemoryDetail = (
+    memory: Memory,
+    source: OverviewMemorySelectionSource = "list",
+  ) => {
+    setSelected(memory);
+    setSelectedDetailMode(
+      !isDesktopViewport || source === "insight" ? "sheet" : "panel",
+    );
+  };
+
   // Queries
   const sourceQuery = useSourceMemories(spaceId);
   const createMutation = useCreateMemory(spaceId);
@@ -302,6 +347,22 @@ export function SpacePage() {
     () => buildStats(timelineScopedMemories),
     [timelineScopedMemories],
   );
+  const listFilterScopeMemories = useMemo(
+    () =>
+      filterMemoriesForView(timelineScopedMemories, {
+        memoryType: search.type,
+        facet,
+      }),
+    [facet, search.type, timelineScopedMemories],
+  );
+  const { data: listSignalIndex } = useBackgroundDerivedSignals({
+    memories: listFilterScopeMemories,
+    matchMap: analysis.matchMap,
+  });
+  const listTagResolver = useMemo<MemoryTagResolver>(
+    () => createTagResolver(listSignalIndex),
+    [listSignalIndex],
+  );
   const topicData = useMemo(
     () =>
       features.enableTopicSummary && !features.enableAnalysis
@@ -309,79 +370,135 @@ export function SpacePage() {
         : undefined,
     [timelineScopedMemories],
   );
+  const { data: analysisRangeSignalIndex } = useBackgroundDerivedSignals({
+    memories: rangeScopedMemories,
+    matchMap: analysis.matchMap,
+  });
   const analysisTagStats = useMemo(
-    () => buildAnalysisTagStats(rangeScopedMemories),
-    [rangeScopedMemories],
+    () => analysisRangeSignalIndex.tagStats.map((stat) => ({
+      value: stat.value,
+      count: stat.count,
+      origin: stat.origin,
+    })),
+    [analysisRangeSignalIndex],
   );
-  const filteredMemories = useMemo(
-    () =>
-      filterMemoriesForView(timelineScopedMemories, {
-        q: search.q,
-        tag,
-        memoryType: search.type,
-        facet,
-      }),
-    [facet, search.q, search.type, tag, timelineScopedMemories],
-  );
-  const analysisFilteredMemories = useMemo(() => {
-    if (!analysisCategory) return [];
+  const analysisCategoryScopeMemories = useMemo(() => {
+    if (!analysisCategory) {
+      return [];
+    }
 
-    return filterMemoriesForView(
-      analysis.sourceMemories.filter((memory) =>
-        analysis.matchMap.get(memory.id)?.categories.includes(analysisCategory),
-      ),
-      {
-        q: search.q,
-        tag,
-        memoryType: search.type,
-        facet,
-        timeline: timelineSelection,
-      },
+    const categoryMemories = analysis.sourceMemories.filter((memory) =>
+      analysis.matchMap.get(memory.id)?.categories.includes(analysisCategory),
     );
+
+    return filterMemoriesForView(categoryMemories, {
+      timeline: timelineSelection,
+      memoryType: search.type,
+      facet,
+    });
   }, [
     analysis.matchMap,
     analysis.sourceMemories,
     analysisCategory,
     facet,
-    search.q,
     search.type,
-    tag,
     timelineSelection,
+  ]);
+  const { data: analysisCategorySignalIndex } = useBackgroundDerivedSignals({
+    memories: analysisCategoryScopeMemories,
+    matchMap: analysis.matchMap,
+  });
+  const analysisCategoryTagResolver = useMemo<MemoryTagResolver>(
+    () => createTagResolver(analysisCategorySignalIndex),
+    [analysisCategorySignalIndex],
+  );
+  const filteredMemories = useMemo(
+    () =>
+      filterMemoriesForView(listFilterScopeMemories, {
+        q: search.q,
+        tag,
+        tagResolver: listTagResolver,
+      }),
+    [listFilterScopeMemories, listTagResolver, search.q, tag],
+  );
+  const analysisFilteredMemories = useMemo(() => {
+    if (!analysisCategory) return [];
+
+    return filterMemoriesForView(
+      analysisCategoryScopeMemories,
+      {
+        q: search.q,
+        tag,
+        tagResolver: analysisCategoryTagResolver,
+      },
+    );
+  }, [
+    analysisCategory,
+    analysisCategoryScopeMemories,
+    analysisCategoryTagResolver,
+    search.q,
+    tag,
   ]);
 
   const usingLocalAnalysisList = !!analysisCategory;
-  const displayedMemories = usingLocalAnalysisList
-    ? analysisFilteredMemories.slice(0, localVisibleCount)
-    : filteredMemories.slice(0, localVisibleCount);
-  const sessionPreviewQuery = useSessionPreviewMessages(spaceId, displayedMemories);
+  const baseDisplayedMemories = usingLocalAnalysisList
+    ? analysisFilteredMemories
+    : filteredMemories;
+  const currentSignalScopeMemories = usingLocalAnalysisList
+    ? analysisCategoryScopeMemories
+    : listFilterScopeMemories;
+  const currentSignalIndex = usingLocalAnalysisList
+    ? analysisCategorySignalIndex
+    : listSignalIndex;
+  const currentTagResolver = usingLocalAnalysisList
+    ? analysisCategoryTagResolver
+    : listTagResolver;
+  const tagOptionMemories = useMemo(
+    () =>
+      filterMemoriesForView(currentSignalScopeMemories, {
+        q: search.q,
+        tagResolver: currentTagResolver,
+      }),
+    [currentSignalScopeMemories, currentTagResolver, search.q],
+  );
+  const displayedMemories = baseDisplayedMemories.slice(0, localVisibleCount);
+  const sessionPreviewMemories = useMemo(() => {
+    if (!selected) return displayedMemories;
+
+    const previewMemories = new Map(displayedMemories.map((memory) => [memory.id, memory]));
+    previewMemories.set(selected.id, selected);
+    return [...previewMemories.values()];
+  }, [displayedMemories, selected]);
+  const sessionPreviewQuery = useSessionPreviewMessages(spaceId, sessionPreviewMemories);
   const sessionPreviewBySessionID = sessionPreviewQuery.data ?? {};
   const hasMoreMemories = usingLocalAnalysisList
-    ? analysisFilteredMemories.length > localVisibleCount
-    : filteredMemories.length > localVisibleCount;
+    ? baseDisplayedMemories.length > localVisibleCount
+    : baseDisplayedMemories.length > localVisibleCount;
   const sourceLoading = sourceQuery.isLoading || sourceQuery.isFetching;
   const isMemoryLoading = usingLocalAnalysisList ? analysis.sourceLoading : sourceLoading;
   const displayedFirstPageSize = Math.min(displayedMemories.length, LOCAL_PAGE_SIZE);
   const tagOptions = useMemo<TagSummary[]>(() => {
-    const source = usingLocalAnalysisList ? analysisFilteredMemories : filteredMemories;
-    const counts = new Map<string, number>();
-
-    for (const memory of source) {
-      for (const memoryTag of memory.tags) {
-        const normalized = memoryTag.trim();
-        if (!normalized) continue;
-        counts.set(normalized, (counts.get(normalized) ?? 0) + 1);
-      }
+    return buildTagOptions(tagOptionMemories, currentSignalIndex);
+  }, [currentSignalIndex, tagOptionMemories]);
+  const pulseMemories = rangeScopedMemories;
+  const activeTagNormalized = tag ? normalizeTagSignal(tag) : null;
+  const activeTagOrigin = useMemo(
+    () =>
+      tag
+        ? getDerivedTagOrigin(tag, currentSignalIndex)
+        : null,
+    [currentSignalIndex, tag],
+  );
+  const showActiveDerivedTags = activeTagOrigin === "derived" && !!activeTagNormalized;
+  const getActiveDerivedTags = (memory: Memory): string[] => {
+    if (!showActiveDerivedTags || !activeTagNormalized) {
+      return [];
     }
 
-    return [...counts.entries()]
-      .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0], "en"))
-      .slice(0, 24)
-      .map(([value, count]) => ({
-        tag: value,
-        count,
-      }));
-  }, [analysisFilteredMemories, filteredMemories, usingLocalAnalysisList]);
-  const pulseMemories = rangeScopedMemories;
+    return getDerivedTagsForMemory(memory, currentSignalIndex).filter(
+      (derivedTag) => normalizeTagSignal(derivedTag) === activeTagNormalized,
+    );
+  };
   const selectedSessionID = selected
     ? getSessionPreviewLookupKey(selected)
     : "";
@@ -395,15 +512,15 @@ export function SpacePage() {
   useEffect(() => {
     if (isMemoryLoading || !selected) return;
 
-    if (displayedMemories.length === 0) {
+    if (baseDisplayedMemories.length === 0) {
       setSelected(null);
       return;
     }
 
-    if (!displayedMemories.some((memory) => memory.id === selected.id)) {
+    if (!baseDisplayedMemories.some((memory) => memory.id === selected.id)) {
       setSelected(null);
     }
-  }, [displayedMemories, isMemoryLoading, selected]);
+  }, [baseDisplayedMemories, isMemoryLoading, selected]);
 
   if (!spaceId) return null;
 
@@ -597,12 +714,15 @@ export function SpacePage() {
     (tag ? 1 : 0) +
     (analysisCategory ? 1 : 0) +
     (timelineSelection ? 1 : 0);
+  const pageShellClass = features.enableAnalysis || selected
+    ? "max-w-[1560px]"
+    : "max-w-3xl";
 
   return (
     <div className="min-h-screen">
       {/* Header */}
       <header className="sticky top-0 z-20 border-b bg-nav-bg backdrop-blur-sm">
-        <div className="mx-auto flex h-14 max-w-[1180px] items-center justify-between px-6">
+        <div className={`mx-auto flex h-14 items-center justify-between px-6 ${pageShellClass}`}>
           <div className="flex items-center gap-3">
             <img
               src="/your-memory/mem9-logo.svg"
@@ -635,13 +755,7 @@ export function SpacePage() {
       </header>
 
       {/* Content */}
-      <div
-        className={`mx-auto px-6 ${
-          features.enableAnalysis || selected
-            ? "max-w-[1560px]"
-            : "max-w-3xl"
-        }`}
-      >
+      <div className={`mx-auto px-6 ${pageShellClass}`}>
         <div className="flex flex-col gap-8 xl:flex-row">
           <div className="min-w-0 flex-1 py-8 xl:order-2">
             {/* Stats cards (clickable for type filtering) */}
@@ -739,16 +853,20 @@ export function SpacePage() {
               </div>
             )}
 
-            <MemoryPulseOverview
+            <MemoryOverviewTabs
               stats={rangeStats}
-              memories={pulseMemories}
+              pulseMemories={pulseMemories}
+              insightMemories={analysis.sourceMemories}
               cards={analysis.cards}
               snapshot={analysis.state.snapshot}
               range={range}
               loading={sourceLoading || analysis.sourceLoading}
+              compact={selected !== null && isDesktopViewport}
               activeType={search.type}
+              activeCategory={analysisCategory}
               activeTag={tag}
               selectedTimeline={timelineSelection}
+              matchMap={analysis.matchMap}
               onTypeSelect={(t) => {
                 handleTypeClick(t);
                 setTimeout(() => {
@@ -761,6 +879,7 @@ export function SpacePage() {
                   scrollToMemoryList();
                 }, 200);
               }}
+              onMemorySelect={openMemoryDetail}
               onTimelineSelect={(selection) => {
                 handleTimelineSelect(selection);
                 setTimeout(() => {
@@ -1023,11 +1142,12 @@ export function SpacePage() {
                     <MemoryCard
                       key={m.id}
                       memory={m}
+                      derivedTags={getActiveDerivedTags(m)}
                       sessionPreview={
                         sessionPreviewBySessionID[getSessionPreviewLookupKey(m)] ?? []
                       }
                       isSelected={selected?.id === m.id}
-                      onClick={() => setSelected(m)}
+                      onClick={() => openMemoryDetail(m, "list")}
                       onDelete={() => setDeleteTarget(m)}
                       t={t}
                       delay={i < displayedFirstPageSize ? i * 30 : 0}
@@ -1096,10 +1216,11 @@ export function SpacePage() {
           )}
 
           {/* Detail panel */}
-          {selected && isDesktopViewport && (
+          {selected && isDesktopViewport && selectedDetailMode === "panel" && (
             <DetailPanel
               key={selected.id}
               memory={selected}
+              derivedTags={getActiveDerivedTags(selected)}
               sessionPreview={selectedSessionPreview}
               sessionPreviewLoading={selectedSessionPreviewLoading}
               onClose={() => setSelected(null)}
@@ -1156,9 +1277,10 @@ export function SpacePage() {
         />
       )}
 
-      {!isDesktopViewport && (
+      {(selected && (!isDesktopViewport || selectedDetailMode === "sheet")) && (
         <MobileDetailSheet
           memory={selected}
+          derivedTags={selected ? getActiveDerivedTags(selected) : []}
           sessionPreview={selectedSessionPreview}
           sessionPreviewLoading={selectedSessionPreviewLoading}
           open={!!selected}

@@ -10,6 +10,7 @@ import { features } from "@/config/features";
 
 export function DetailPanel({
   memory: m,
+  derivedTags = [],
   sessionPreview,
   sessionPreviewLoading,
   onClose,
@@ -18,6 +19,7 @@ export function DetailPanel({
   t,
 }: {
   memory: Memory;
+  derivedTags?: string[];
   sessionPreview: SessionMessage[];
   sessionPreviewLoading: boolean;
   onClose: () => void;
@@ -33,12 +35,14 @@ export function DetailPanel({
       <div className="sticky top-[calc(3.5rem+2rem)] overflow-hidden rounded-2xl border border-border/30 bg-card shadow-lg ring-1 ring-border/5">
         <DetailPanelContent
           memory={m}
+          derivedTags={derivedTags}
           sessionPreview={sessionPreview}
           sessionPreviewLoading={sessionPreviewLoading}
           onClose={onClose}
           onDelete={onDelete}
           onEdit={onEdit}
           t={t}
+          compactSessionPreview={false}
           className="flex max-h-[calc(100vh-10rem)] min-h-[400px] flex-col"
           scrollAreaClassName="flex-1 overflow-y-auto px-7 py-6"
         />
@@ -49,21 +53,25 @@ export function DetailPanel({
 
 export function DetailPanelContent({
   memory: m,
+  derivedTags = [],
   sessionPreview,
   sessionPreviewLoading,
   onClose,
   onDelete,
   onEdit,
+  compactSessionPreview = false,
   className,
   scrollAreaClassName,
   t,
 }: {
   memory: Memory;
+  derivedTags?: string[];
   sessionPreview: SessionMessage[];
   sessionPreviewLoading: boolean;
   onClose: () => void;
   onDelete: () => void;
   onEdit?: () => void;
+  compactSessionPreview?: boolean;
   className?: string;
   scrollAreaClassName?: string;
   t: TFunction;
@@ -173,6 +181,23 @@ export function DetailPanelContent({
               ))}
             </div>
           )}
+          {derivedTags.length > 0 && (
+            <div>
+              <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-primary">
+                {t("detail.derived_tags")}
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {derivedTags.map((tag) => (
+                  <span
+                    key={tag}
+                    className="rounded-md bg-primary/10 px-2.5 py-1 text-[11px] font-medium text-primary"
+                  >
+                    #{tag}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
 
             <div className="grid grid-cols-2 gap-x-4 gap-y-3 rounded-xl border border-border/40 bg-secondary/20 p-4">
               <MetaCell
@@ -198,6 +223,7 @@ export function DetailPanelContent({
                 <DetailSessionPreview
                   messages={sessionPreview}
                   loading={sessionPreviewLoading}
+                  compactMetadata={compactSessionPreview}
                   t={t}
                 />
               </div>
