@@ -1,6 +1,6 @@
 # mem9 Troubleshooting
 
-Use this file for reconnect, setup failures, and dashboard/login confusion after the main mem9 setup flow.
+Use this file for reconnect, setup failures, uninstall failures, and dashboard/login confusion after the main mem9 flow.
 
 ## Quick Checks
 
@@ -50,6 +50,18 @@ Confirm these first:
 - Rewrite the original user-provided key to the correct field
 - Restart and verify again
 - If a new key is still auto-provisioned after that, stop the reconnect flow and keep troubleshooting instead of silently switching mem9 spaces
+
+### Removed mem9 But Gateway Will Not Start
+
+- Treat this as uninstall failure, not success
+- First re-check the current config read-back
+- The most common cause is `plugins.slots.memory` still pointing to `mem9`
+- Also re-check whether `plugins.entries.memory-core.enabled = true` after restoring the default memory slot
+- Re-check that `plugins.entries.mem9` was removed
+- Re-check that `plugins.installs.mem9` was removed if it existed before
+- Re-check that `"mem9"` is no longer present in `plugins.allow`
+- After the config read-back, inspect the gateway logs for the exact startup error
+- If the config still matches the uninstall failure pattern, re-apply the safe rollback from `UNINSTALL.md` before trying another restart
 
 ### User Returned After Restart But Verification Is Still In Progress
 
