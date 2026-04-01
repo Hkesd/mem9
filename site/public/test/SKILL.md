@@ -1,6 +1,6 @@
 ---
 name: mem9
-version: 1.0.16
+version: 1.0.17
 homepage: "https://mem9.ai"
 description: "Entry skill for mem9 onboarding and reconnect. After ClawHub install, users can say: setup mem9, install mem9, reconnect mem9, or review mem9 config changes."
 keywords: ["mem9", "memory plugin", "persistent memory", "agent memory", "install mem9", "setup mem9", "reconnect mem9", "openclaw memory"]
@@ -70,14 +70,22 @@ Do not use this skill for:
 ## First-Run Rule
 
 - If mem9 is not fully set up on this machine, read `SETUP.md` from the same skill directory before continuing.
-- If this skill was loaded remotely instead of from a local skill directory, read [SETUP.md](https://mem9.ai/SETUP.md).
+- If this skill was loaded remotely instead of from a local skill directory, read `SETUP.md` from the same URL directory as the current `SKILL.md`.
+- Remote path examples:
+  - `https://mem9.ai/SKILL.md` -> [https://mem9.ai/SETUP.md](https://mem9.ai/SETUP.md)
+  - `https://mem9.ai/beta/SKILL.md` -> [https://mem9.ai/beta/SETUP.md](https://mem9.ai/beta/SETUP.md)
+  - `https://mem9.ai/test/SKILL.md` -> [https://mem9.ai/test/SETUP.md](https://mem9.ai/test/SETUP.md)
 - Follow `SETUP.md` for install, config, restart, verify, and the required final handoff. Do not improvise extra setup flows.
 
 ## Steady-State Rule
 
 - If mem9 is already configured, do not repeat the full first-run onboarding unless the user explicitly asks to reinstall.
 - For reconnect, config review, or setup failures, read `TROUBLESHOOTING.md` from the same skill directory.
-- If this skill was loaded remotely, read [TROUBLESHOOTING.md](https://mem9.ai/TROUBLESHOOTING.md).
+- If this skill was loaded remotely, read `TROUBLESHOOTING.md` from the same URL directory as the current `SKILL.md`.
+- Remote path examples:
+  - `https://mem9.ai/SKILL.md` -> [https://mem9.ai/TROUBLESHOOTING.md](https://mem9.ai/TROUBLESHOOTING.md)
+  - `https://mem9.ai/beta/SKILL.md` -> [https://mem9.ai/beta/TROUBLESHOOTING.md](https://mem9.ai/beta/TROUBLESHOOTING.md)
+  - `https://mem9.ai/test/SKILL.md` -> [https://mem9.ai/test/TROUBLESHOOTING.md](https://mem9.ai/test/TROUBLESHOOTING.md)
 - Keep historical import manual. Direct users to the dashboard or another reviewed manual workflow instead of uploading local files from this skill.
 
 ## Definition of Done
