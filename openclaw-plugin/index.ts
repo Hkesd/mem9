@@ -75,6 +75,10 @@ function jsonResult(data: unknown) {
   }
 }
 
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
 interface MemoryCapability {
   search: (query: string, opts?: { limit?: number }) => Promise<{ data: Memory[]; total: number }>;
   store: (content: string, opts?: { tags?: string[]; source?: string }) => Promise<unknown>;
@@ -303,6 +307,7 @@ const mnemoPlugin = {
     const cfg = (api.pluginConfig ?? {}) as PluginConfig;
     const effectiveApiUrl = cfg.apiUrl ?? DEFAULT_API_URL;
     const timeoutConfig = resolveTimeouts(cfg, api.logger);
+    const hookAgentId = cfg.agentName ?? "agent";
     if (!cfg.apiUrl) {
       api.logger.info(`[mem9] apiUrl not configured, using default ${DEFAULT_API_URL}`);
     }
@@ -333,14 +338,22 @@ const mnemoPlugin = {
     const resolveAPIKey = (agentName: string): Promise<string> => {
       if (configuredApiKey) return Promise.resolve(configuredApiKey);
       if (!registrationPromise) {
-        registrationPromise = registerTenant(agentName);
+        registrationPromise = registerTenant(agentName).catch((err) => {
+          registrationPromise = null;
+          throw err;
+        });
       }
       return registrationPromise;
     };
 
     api.logger.info("[mem9] Server mode (v1alpha2)");
 
-    const hookAgentId = cfg.agentName ?? "agent";
+    if (!configuredApiKey) {
+      api.logger.info("[mem9] apiKey not configured; starting auto-provision");
+      void resolveAPIKey(hookAgentId).catch((err) => {
+        api.logger.error(`[mem9] auto-provision failed: ${errorMessage(err)}`);
+      });
+    }
 
     const factory: ToolFactory = (ctx: ToolContext) => {
       const agentId = ctx.agentId ?? cfg.agentName ?? "agent";
@@ -398,15 +411,24 @@ const toolNames = [
 ];
 
 class LazyServerBackend implements MemoryBackend {
+  private apiUrl: string;
+  private apiKeyProvider: () => Promise<string>;
+  private agentId: string;
+  private timeouts: BackendTimeouts;
   private resolved: ServerBackend | null = null;
   private resolving: Promise<ServerBackend> | null = null;
 
   constructor(
-    private apiUrl: string,
-    private apiKeyProvider: () => Promise<string>,
-    private agentId: string,
-    private timeouts: BackendTimeouts,
-  ) {}
+    apiUrl: string,
+    apiKeyProvider: () => Promise<string>,
+    agentId: string,
+    timeouts: BackendTimeouts,
+  ) {
+    this.apiUrl = apiUrl;
+    this.apiKeyProvider = apiKeyProvider;
+    this.agentId = agentId;
+    this.timeouts = timeouts;
+  }
 
   private async resolve(): Promise<ServerBackend> {
     if (this.resolved) return this.resolved;
