@@ -1,6 +1,6 @@
 ---
 name: mem9
-version: 1.0.39
+version: 1.0.41
 homepage: "https://mem9.ai/openclaw-memory"
 description: "Persistent cloud memory plugin for OpenClaw. This document routes setup, troubleshooting, and uninstall flows and defines config boundaries."
 keywords: ["mem9", "openclaw memory", "persistent memory", "cloud memory", "memory plugin", "setup mem9", "install mem9", "reconnect mem9", "uninstall mem9"]
@@ -39,6 +39,7 @@ Only these `openclaw.json` paths may be changed during setup:
 - `plugins.entries.mem9.enabled`
 - `plugins.entries.mem9.config.apiUrl`
 - `plugins.entries.mem9.config.apiKey`
+- `plugins.entries.mem9.config.provisionToken` for create-new only; generate it once per create-new run before the first restart and keep it stable until the explicit provision step returns and the generated `apiKey` is written back
 - `plugins.entries.mem9.config.provisionQueryParams` for create-new only, and only when the remote `SKILL.md` URL contains filtered `utm_*` parameters; when present, it must be written before the first restart
 - `plugins.allow`
 

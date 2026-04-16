@@ -21,16 +21,12 @@ Confirm these first:
 - Re-check that the mem9 package was installed successfully
 - Re-check that the config only edits the exact mem9 keys and does not corrupt unrelated JSON
 
-### Create-New Flow Did Not Auto-Provision
+### Create-New Flow Did Not Return A Key
 
 - Make sure the first restart happened with `plugins.entries.mem9.config.apiKey` absent
-- Look for the exact log line:
-
-```text
-[mem9] *** Auto-provisioned apiKey=<id> *** Save this to your config as apiKey
-```
-
-- If no such line appears, stop the first-run flow and ask the user whether to retry the restart or switch to reconnect with an existing API key
+- Make sure `plugins.entries.mem9.config.provisionToken` was present and stable before that restart
+- Make sure the resumed turn invoked `mem9_provision_api_key` exactly once
+- If `mem9_provision_api_key` did not return a key, stop the first-run flow and ask the user whether to retry the clean create-new flow or switch to reconnect with an existing API key
 
 ### Create-New Flow Did Not Carry Expected UTM Params
 
@@ -40,14 +36,17 @@ Confirm these first:
 - If `provisionQueryParams` was absent, partial, renamed, or different before the first restart, do not assume the generated key was attributed correctly
 - In that case, stop the happy-path create-new handoff and decide whether to re-run create-new cleanly or switch to reconnect
 
-### Create-New Flow Generated Multiple Auto-Provisioned Keys
+### Create-New Flow Generated Multiple Keys
 
 - Treat this as abnormal create-new behavior, not as automatic success
 - Do not silently keep the latest key without checking the earlier provision attempts
-- Re-check whether `plugins.entries.mem9.config.provisionQueryParams` was already present before the first successful auto-provision
+- Re-check whether `plugins.entries.mem9.config.provisionToken` was already present before the first successful provision and stayed unchanged for the whole create-new run
+- Re-check whether `plugins.entries.mem9.config.provisionQueryParams` was already present before the first successful provision
+- Re-check whether `mem9_provision_api_key` was invoked more than once before config write-back
+- Re-check whether startup logs show an unexpected auto-provision before the explicit tool call
 - Re-check whether the final persisted `plugins.entries.mem9.config.apiKey` matches the key the plugin is currently using
 - If attribution or final-key correctness cannot be confirmed, stop and troubleshoot instead of handing off the newest key
-- If the installed plugin version is older than `@mem9/mem9@0.4.4`, upgrade first; newer builds share one local auto-provision result across concurrent plugin registrations to avoid duplicate keys during host reloads
+- If the installed plugin version is older than `@mem9/mem9@0.4.6`, upgrade first; newer builds only provision through `mem9_provision_api_key` and also share one local result across duplicate setup retries before config write-back
 
 ### Restart Returned But The Setup Kept Waiting For Another `hi`
 
