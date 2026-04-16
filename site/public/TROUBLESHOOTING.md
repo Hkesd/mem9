@@ -25,8 +25,9 @@ Confirm these first:
 
 - Make sure the first restart happened with `plugins.entries.mem9.config.apiKey` absent
 - Make sure `plugins.entries.mem9.config.provisionToken` was present and stable before that restart
-- Make sure the resumed turn invoked `mem9_provision_api_key` exactly once
-- If `mem9_provision_api_key` did not return a key, stop the first-run flow and ask the user whether to retry the clean create-new flow or switch to reconnect with an existing API key
+- Make sure the first resumed user message after that restart actually reached the plugin hook path
+- Make sure that resumed turn produced exactly one generated key in logs
+- If the first resumed turn did not produce a key, stop the first-run flow and ask the user whether to retry the clean create-new flow or switch to reconnect with an existing API key
 
 ### Create-New Flow Did Not Carry Expected UTM Params
 
@@ -42,18 +43,19 @@ Confirm these first:
 - Do not silently keep the latest key without checking the earlier provision attempts
 - Re-check whether `plugins.entries.mem9.config.provisionToken` was already present before the first successful provision and stayed unchanged for the whole create-new run
 - Re-check whether `plugins.entries.mem9.config.provisionQueryParams` was already present before the first successful provision
-- Re-check whether `mem9_provision_api_key` was invoked more than once before config write-back
-- Re-check whether startup logs show an unexpected auto-provision before the explicit tool call
-- Re-check whether the final persisted `plugins.entries.mem9.config.apiKey` matches the key the plugin is currently using
+- Re-check whether more than one post-restart provision attempt ran before the first key was reused locally
+- Re-check whether startup logs show an unexpected provision before the first resumed user message
+- Re-check whether later logs reused the same locally persisted key for the same `provisionToken`
 - If attribution or final-key correctness cannot be confirmed, stop and troubleshoot instead of handing off the newest key
-- If the installed plugin version is older than `@mem9/mem9@0.4.6`, upgrade first; newer builds only provision through `mem9_provision_api_key` and also share one local result across duplicate setup retries before config write-back
+- If the installed plugin version is older than `@mem9/mem9@0.4.7`, upgrade first; newer builds provision only from the first post-restart user message and also reuse one local result across duplicate setup retries
 
 ### Restart Returned But The Setup Kept Waiting For Another `hi`
 
 - One short post-restart `hi` is normal because the gateway restart cuts the current execution turn
 - More than one extra `hi` without another real restart is abnormal orchestration behavior
-- Re-check the restart logs for a second config-driven restart after `plugins.entries.mem9.config.apiKey` was written
+- Re-check the restart logs for a second config-driven restart caused by splitting install/config into multiple phases
 - Re-check whether the user-facing resume message was sent before post-restart verification had actually started
+- Re-check whether the flow was still waiting on an internal plugin tool or another non-user-reachable interface
 - If the flow asked for another keepalive without a new restart, stop the happy path and treat it as setup orchestration failure, not as normal mem9 onboarding behavior
 
 ### Existing API Key Fails After Reconnect

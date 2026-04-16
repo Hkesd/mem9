@@ -21,7 +21,7 @@ When this file is read, send ONLY the choice prompt below. Do not include enviro
 - Do not use direct web-request commands, raw memory API calls, or scripted shell patch commands in this public setup flow.
 - Do not change the user's global npm registry config during setup unless the user explicitly asks for a permanent mirror change.
 - Reconnect and create-new are separate branches. Once one branch is selected, ignore the other branch unless the user explicitly changes their choice.
-- In create-new mode, generate `PROVISION_TOKEN` once immediately after the branch is selected, write it under `plugins.entries.mem9.config.provisionToken` before the first restart, and keep that exact value stable until the explicit provision step returns and the generated `apiKey` is written back.
+- In create-new mode, generate `PROVISION_TOKEN` once immediately after the branch is selected, write it under `plugins.entries.mem9.config.provisionToken` before the first restart, and keep that exact value stable through the first successful post-restart provision on this machine.
 - Before taking any action, show one dry-run preview that covers install, config edits, expected restarts, and what the user must do after the restart.
 - Use one explicit approval for the entire disclosed flow. Do not ask for a second approval unless the scope materially changes.
 - In create-new mode, if the remote `SKILL.md` URL contains filtered `utm_*` params, do not proceed to the first restart until `plugins.entries.mem9.config.provisionQueryParams` has been disclosed and read back exactly.
@@ -97,8 +97,8 @@ The dry-run preview must disclose:
 - install may use a one-shot `NPM_CONFIG_REGISTRY=https://registry.npmmirror.com` override when the default npm registry is slow or unreachable
 - only mem9 plugin config keys will be changed
 - reconnect path expects one restart after config is written and read back
-- create-new path expects one restart without `apiKey`; after the restart, setup must call the plugin tool `mem9_provision_api_key` exactly once, then write the returned key back to config without scheduling an extra mem9-only restart
-- create-new path will also write one unique `provisionToken` before the first restart so repeated explicit provision retries collapse to the same key
+- create-new path expects one restart without `apiKey`; after the restart, the first user message must trigger exactly one create-new provision through the normal plugin hook path
+- create-new path will also write one unique `provisionToken` before the first restart so repeated post-restart retries on this machine collapse to the same key
 - if create-new has `REMOTE_SKILL_UTM_PARAMS`, the dry-run must explicitly say those filtered `utm_*` values will be written under `plugins.entries.mem9.config.provisionQueryParams` before the first restart
 - local history will not be uploaded by this setup flow
 - one short restart-and-return instruction in the user's language
@@ -140,13 +140,15 @@ Immediately after install completes, and before any restart action or restart to
 Recommended notice content:
 
 ```text
-✅ mem9 plugin installed. Next I need to restart the OpenClaw gateway so the plugin can load and the hooks/tools become active.
+✅ mem9 plugin installed. Next I need to restart the OpenClaw gateway so the plugin can load and the mem9 hooks become active.
 
 The restart will take about 1 minute. After that, send me a message to confirm mem9 is functional.
 ```
 
 - If the gateway will be restarted automatically through tools or exec, send this notice before issuing the restart action.
 - Do not rely on the final assistant reply as the first place this notice appears.
+- Do not stop after install and wait for another user message before Step 2 or Step 3.
+- If `openclaw plugins install @mem9/mem9` schedules a deferred gateway restart, finish OpenClaw version detection, mem9 config writes, and config read-back in that same approved turn before the deferred restart is allowed to fire.
 - After the restart finishes, ask the user to wait about 1 minute and send a short message such as `hi`.
 
 ### Required Post-Approval Notice
@@ -322,7 +324,7 @@ Before every restart:
 - If reconnect mode ever logs this line, treat it as failure, not success:
 
 ```text
-[mem9] *** Auto-provisioned apiKey=<id> *** Save this to your config as apiKey
+[mem9] *** Auto-provisioned apiKey=<id> *** Save this for recovery or reconnect as apiKey
 ```
 
 - If that happens, follow this recovery sequence:
@@ -340,25 +342,22 @@ Before every restart:
    That same restart must already have the exact `plugins.entries.mem9.config.provisionToken = PROVISION_TOKEN` in config.
    If `REMOTE_SKILL_UTM_PARAMS` is non-empty, that same restart must already have the exact `plugins.entries.mem9.config.provisionQueryParams` map present in config.
 2. After the user returns from that restart, resume verification in the current turn.
-3. Invoke the plugin tool `mem9_provision_api_key` exactly once in that resumed turn. Do not wait for startup auto-provision logs.
-4. Save the returned key as `AUTO_PROVISIONED_MEM9_API_KEY`
-5. Write that value back into `plugins.entries.mem9.config.apiKey`
-6. Read back the config and confirm the persisted value exactly matches `AUTO_PROVISIONED_MEM9_API_KEY`
-7. Do not schedule an extra restart just for mem9 — the plugin is already running with the explicitly provisioned key in memory, and the config read-back confirms the key will persist through future restarts
-8. If the host triggers a config-driven restart after the `apiKey` write-back, treat it as host behavior and resume verification after it comes back instead of re-running create-new
-9. Proceed directly to verification
+3. Let the first resumed user message trigger the plugin's automatic create-new provision through the normal hook path. Do not wait for startup auto-provision logs, and do not rely on any internal plugin tool.
+4. Read recent gateway logs and extract the single generated key as `AUTO_PROVISIONED_MEM9_API_KEY`
+5. Do not schedule a second mem9-only restart just to persist `apiKey` in `openclaw.json`
+6. Proceed directly to verification once the generated key and positive health signals are confirmed
 
-If `mem9_provision_api_key` does not return a key, stop and use `TROUBLESHOOTING.md`.
+If the first resumed turn does not produce a key in logs, stop and use `TROUBLESHOOTING.md`.
 
-If the gateway logs show an auto-provisioned key before the explicit tool call, treat that as abnormal startup behavior and stop the happy path.
+If the gateway logs show a generated key before the first resumed user message after the restart, treat that as abnormal startup behavior and stop the happy path.
 
 If multiple different keys appear during one create-new run, treat that as an abnormal flow, not as success-by-default:
 
 1. stop the happy-path handoff
 2. verify whether `REMOTE_SKILL_UTM_PARAMS` was present in config before the first successful provision
 3. verify whether `PROVISION_TOKEN` stayed stable for that entire create-new run
-4. verify whether `mem9_provision_api_key` was only used once before config write-back
-5. verify whether the persisted config now matches the intended final key
+4. verify whether only one post-restart provision request was made before success
+5. verify whether later logs reused the same locally persisted key for the same `PROVISION_TOKEN`
 6. if attribution, token stability, call-count, or final-key correctness cannot be confirmed, stop and use `TROUBLESHOOTING.md` instead of silently keeping the latest key
 
 ### Post-Restart Resume Contract
@@ -371,6 +370,7 @@ If multiple different keys appear during one create-new run, treat that as an ab
 - Do not enumerate internal checklists, log lines, temporary status flips, or diagnostic reasoning in the resume reply.
 - Do not stream intermediate verification details to the user unless the flow is blocked or has failed.
 - After the first post-restart `hi`, either finish verification in that resumed turn or surface a concrete blocking problem.
+- Do not ask for another keepalive message while the only missing step is the plugin's first-message create-new provision; that step must be driven by the same resumed turn.
 - Do not ask for repeated keepalive messages such as another `hi` unless a real additional restart occurred after the first resumed turn began.
 - If the first post-restart host status briefly reports memory as unavailable, do one silent re-check before telling the user anything else.
 - That silent re-check must use the current config plus mem9-specific logs or activity to confirm whether the plugin is actually healthy.
@@ -417,12 +417,11 @@ Create-new is successful only if all of the following are true:
 
 - The plugin can reach the mem9 API
 - OpenClaw loads the mem9 plugin without config or plugin errors
-- The create-new flow produced a key through exactly one explicit `mem9_provision_api_key` call after the first restart
-- `AUTO_PROVISIONED_MEM9_API_KEY` was written back into config and the read-back value matches
+- The create-new flow produced a key from exactly one post-restart provision request after the first restart
 - `PROVISION_TOKEN` was written before the first restart and remained stable for the create-new run
 - If `REMOTE_SKILL_UTM_PARAMS` is non-empty, `plugins.entries.mem9.config.provisionQueryParams` was read back before the first restart and exactly matched that map
-- No additional key replaced `AUTO_PROVISIONED_MEM9_API_KEY` after it was written back
-- The plugin is running with the explicitly provisioned key (confirmed by positive health signals or absence of startup errors)
+- No different additional key replaced `AUTO_PROVISIONED_MEM9_API_KEY` later in the same create-new run
+- The plugin is running with the generated key on this machine (confirmed by positive health signals or absence of startup errors)
 - Empty memory results are acceptable for a new mem9 space
 
 **Verification priority**: Log-based health signals take precedence over `openclaw status`. If `openclaw status` shows `enabled (plugin mem9) · unavailable` but recent logs contain any positive health signal listed in the Positive Health Signals section above, the plugin is healthy and verification passes. This transient unavailable state is a known OpenClaw probe timing issue and must not block the final handoff.
@@ -471,7 +470,7 @@ Also store the USER_PROVIDED_MEM9_API_KEY in a password manager or secure vault.
 
 ### Create-New Final Handoff
 
-Use this only when create-new succeeded and the key returned by `mem9_provision_api_key` was intentionally adopted:
+Use this only when create-new succeeded and the single post-restart provision produced a stable key:
 
 ```text
 ✅ Your mem9 API key is ready.
@@ -489,6 +488,7 @@ If you later ask me to remember something, I should write it to mem9 and tell yo
 
 AUTO_PROVISIONED_MEM9_API_KEY: <generated-key>
 
+This machine will keep using the same generated key for this create-new run.
 Use this same value as MEM9_API_KEY in recovery or on another trusted machine.
 Keep it private and store it somewhere safe.
 
